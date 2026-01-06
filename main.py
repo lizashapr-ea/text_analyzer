@@ -1,17 +1,5 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import Optional
+from server.api.endpoints import app
 import uvicorn
-from typing import List
-app = FastAPI()
-
-class TextRequest(BaseModel):
-    documents: List[str]
-
-@app.get("/")
-async def root():
-    '''Корневой эндпоинт'''
-    return {"message": "Hello, FastAPI !!!"}
 
 if __name__ == "__main__":
     uvicorn.run(
