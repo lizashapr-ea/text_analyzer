@@ -1,3 +1,0 @@
-#TODO реализовать функции: токенизации, стемминга, лемматизации, Part-of-Speech (POS) tagging, Named Entity Recognition.
-#Важно! Каждая функция пойдет под своим endpoint'ом в соответствующем файле (endpoints.py) с началом в виде /text-nltk/...
-#Например, "@app.get("/text-nltk/tokenize")"
