@@ -1,5 +1,6 @@
 import json
 from urllib.request import Request, urlopen
+import os
 
 
 def send_request(url, payload):
@@ -19,68 +20,39 @@ def pretty_print(data):
 
 def main():
     base_url = "http://127.0.0.1:8001"
+    output_lines = []  # Сюда будем собирать весь вывод
 
-    payload = {
-        "documents": [
-            "Привет! Это пример текста для обработки с помощью клиент-серверной программы.", 
-            "Я Лиза, мне шестнадцать лет, я люблю читать, аааааааа"
-        ]
-    }
-    
-    # tokenize
-    url_tokenize = f"{base_url}/textnltk/tokenize"
-    print("TOKENIZE:")
-    pretty_print(send_request(url_tokenize, payload))
-    print()
+    # --- читаем данные из файла ---
+    file_path = os.path.join(os.path.dirname(__file__), "../server/ressources/corpus.txt")
+    with open(file_path, "r", encoding="utf-8") as f:
+        payload = json.loads(f.read())
 
-    # stem
-    url_stem = f"{base_url}/textnltk/stem?stemmer_type=porter"
-    print("STEM:")
-    pretty_print(send_request(url_stem, payload))
-    print()
+    def log_and_collect(title, data):
+        """Печатает заголовок и данные, и добавляет их в список для сохранения"""
+        header = f"{title}:\n"
+        formatted_data = json.dumps(data, indent=2, ensure_ascii=False)
+        full_output = header + formatted_data + "\n\n"
+        print(header.strip())
+        print(formatted_data)
+        output_lines.append(full_output)
 
-    # lemmatize
-    url_lemmatize = f"{base_url}/textnltk/lemmatize?pos_tagging=true"
-    print("LEMMATIZE:")
-    pretty_print(send_request(url_lemmatize, payload))
-    print()
+    # Выполняем запросы и собираем результаты
+    log_and_collect("TOKENIZE", send_request(f"{base_url}/textnltk/tokenize", payload))
+    log_and_collect("STEM", send_request(f"{base_url}/textnltk/stem?stemmer_type=porter", payload))
+    log_and_collect("LEMMATIZE", send_request(f"{base_url}/textnltk/lemmatize?pos_tagging=true", payload))
+    log_and_collect("POSTAG", send_request(f"{base_url}/textnltk/postag?detailed=false", payload))
+    log_and_collect("NER", send_request(f"{base_url}/textnltk/ner?binary=false", payload))
+    log_and_collect("BAG OF WORDS", send_request(f"{base_url}/bagofwords", payload))
+    log_and_collect("TF-IDF", send_request(f"{base_url}/tfidf", payload))
+    log_and_collect("LSA", send_request(f"{base_url}/lsa", payload))
+    log_and_collect("WORD2VEC", send_request(f"{base_url}/word2vec", payload))
 
-    # postag
-    url_postag = f"{base_url}/textnltk/postag?detailed=false"
-    print("POSTAG:")
-    pretty_print(send_request(url_postag, payload))
-    print()
+    # Сохраняем всё в файл
+    output_file = os.path.join(os.path.dirname(__file__), "output.txt")
+    with open(output_file, "w", encoding="utf-8") as out_f:
+        out_f.write("".join(output_lines))
 
-    # ner
-    url_ner = f"{base_url}/textnltk/ner?binary=false"
-    print("NER:")
-    pretty_print(send_request(url_ner, payload))
-    print()
-
-    # bagofwords
-    url_bow = f"{base_url}/bagofwords"
-    print("BAG OF WORDS:")
-    pretty_print(send_request(url_bow, payload))
-    print()
-
-    # tfidf
-    url_tfidf = f"{base_url}/tfidf"
-    print("TF-IDF:")
-    pretty_print(send_request(url_tfidf, payload))
-    print()
-
-    # lsa
-    url_lsa = f"{base_url}/lsa"
-    print("LSA:")
-    pretty_print(send_request(url_lsa, payload))
-    print()
-
-    # word2vec
-    url_word2vec = f"{base_url}/word2vec"
-    print("WORD2VEC:")
-    pretty_print(send_request(url_word2vec, payload))
-    print()
-
+    print(f"\nРезультаты сохранены в файл: {output_file}")
 
 
 if __name__ == "__main__":
