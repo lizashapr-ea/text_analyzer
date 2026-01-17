@@ -12,8 +12,10 @@ def send_request(url, payload):
 
     return result
 
+
 def pretty_print(data):
     print(json.dumps(data, indent=2, ensure_ascii=False))
+
 
 def main():
     base_url = "http://127.0.0.1:8001"
@@ -22,9 +24,9 @@ def main():
         "documents": [
             "Привет! Это пример текста для обработки с помощью клиент-серверной программы.", 
             "Я Лиза, мне шестнадцать лет, я люблю читать, аааааааа"
-             ]
+        ]
     }
-
+    
     # tokenize
     url_tokenize = f"{base_url}/textnltk/tokenize"
     print("TOKENIZE:")
@@ -53,6 +55,30 @@ def main():
     url_ner = f"{base_url}/textnltk/ner?binary=false"
     print("NER:")
     pretty_print(send_request(url_ner, payload))
+    print()
+
+    # bagofwords
+    url_bow = f"{base_url}/bagofwords"
+    print("BAG OF WORDS:")
+    pretty_print(send_request(url_bow, payload))
+    print()
+
+    # tfidf
+    url_tfidf = f"{base_url}/tfidf"
+    print("TF-IDF:")
+    pretty_print(send_request(url_tfidf, payload))
+    print()
+
+    # lsa
+    url_lsa = f"{base_url}/lsa"
+    print("LSA:")
+    pretty_print(send_request(url_lsa, payload))
+    print()
+
+    # word2vec
+    url_word2vec = f"{base_url}/word2vec"
+    print("WORD2VEC:")
+    pretty_print(send_request(url_word2vec, payload))
     print()
 
 

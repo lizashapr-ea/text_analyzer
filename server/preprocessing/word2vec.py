@@ -15,10 +15,10 @@ def preprocess_text(text: str) -> str:
 
 
 def handle_text_with_word2vec(request: TextRequest):
-    if not request.texts:
+    if not request.documents:
         raise HTTPException(status_code=400, detail="Список текстов не может быть пустым")
 
-    processed_texts: List[str] = [preprocess_text(text) for text in request.texts]
+    processed_texts: List[str] = [preprocess_text(text) for text in request.documents]
     
     vectorizer = TfidfVectorizer(
         max_features=1000,      # ограничение словаря

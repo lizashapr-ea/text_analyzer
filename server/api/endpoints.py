@@ -29,7 +29,6 @@ async def lsa(request: TextRequest):
     '''Латентный семантический анализ (LSA)'''
     return handle_text_with_lsa(request)
 
-
 @app.post("/word2vec")
 async def word2vec(request: TextRequest):
     '''Упрощённое представление Word2Vec'''
