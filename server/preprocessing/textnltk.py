@@ -1,23 +1,20 @@
-#TODO реализовать функции: токенизации, стемминга, лемматизации, Part of Speech (POS) tagging, Named Entity Recognition.
-#Важно! Каждая функция пойдет под своим endpoint'ом в соответствующем файле (endpoints.py) с началом в виде /textnltk/...
-#Например, "@app.get("/textnltk/tokenize")"
+# TODO реализовать функции: токенизации, стемминга, лемматизации, Part of Speech (POS) tagging, Named Entity Recognition.
+# Важно! Каждая функция пойдет под своим endpoint'ом в соответствующем файле (endpoints.py) с началом в виде /textnltk/...
 
 from server.models.models import TextRequest
 
 import nltk
 import string
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.stem import PorterStemmer, SnowballStemmer
-from nltk.stem import WordNetLemmatizer
-from nltk import pos_tag, ne_chunk
+from nltk.stem import SnowballStemmer
 from nltk.corpus import stopwords
-from nltk.tree import Tree
 import ssl
 from pymystem3 import Mystem
 import re
+from natasha import Segmenter, NewsEmbedding, NewsNERTagger, Doc
 
-# Настройки для обхода SSL при загрузке данных NLTK
+# SSL fix
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -25,100 +22,53 @@ except AttributeError:
 else:
     ssl._create_default_https_context = _create_unverified_https_context
 
-# Загрузка необходимых ресурсов NLTK
+# Загрузка только необходимых ресурсов для русского
 def download_nltk_resources():
-    """Загрузка необходимых ресурсов NLTK"""
-    resources = [
-        'punkt',
-        'punkt_tab',  # Для русского токенизатора
-        'averaged_perceptron_tagger',
-        'maxent_ne_chunker',
-        'words',
-        'wordnet',
-        'stopwords',
-        'omw-eng',  # Open Multilingual Wordnet
-    ]
-    
-    for resource in resources:
+    for resource in ['punkt', 'punkt_tab']:
         try:
             nltk.download(resource, quiet=True)
         except Exception as e:
-            print(f"Не удалось загрузить ресурс '{resource}': {e}")
-    
-    # Для русского языка загружаем отдельно
+            print(f"Не удалось загрузить '{resource}': {e}")
+    # Загружаем русские стоп-слова
     try:
-        # Пытаемся загрузить русские стоп-слова
         nltk.download('stopwords', quiet=True)
-    except:
-        pass
-    
-    print("Ресурсы NLTK загружены")
+    except Exception as e:
+        print(f"Не удалось загрузить stopwords: {e}")
+    print("Ресурсы NLTK для русского загружены")
 
-# Вызов загрузки ресурсов при импорте
 download_nltk_resources()
 
-# Инициализация инструментов для обоих языков
-porter_stemmer = PorterStemmer()
-snowball_stemmer_en = SnowballStemmer("english")
+# Инструменты (только для русского)
+mystem = Mystem()
 snowball_stemmer_ru = SnowballStemmer("russian")
-mystem = Mystem()  # Для русского
-
-# Стоп-слова для обоих языков
-stop_words_en = set(stopwords.words('english'))
 stop_words_ru = set(stopwords.words('russian'))
 
-# Функция для определения языка
+# Глобальные компоненты Natasha
+segmenter = Segmenter()
+emb = NewsEmbedding()
+ner_tagger = NewsNERTagger(emb)
+
+# Язык фиксирован
 def detect_language(text: str) -> str:
-    """Простое определение языка текста"""
-    # Простая эвристика для определения языка
-    ru_chars = len([c for c in text if 'а' <= c <= 'я' or 'А' <= c <= 'Я'])
-    en_chars = len([c for c in text if 'a' <= c <= 'z' or 'A' <= c <= 'Z'])
-    
-    if ru_chars > en_chars:
-        return 'ru'
-    else:
-        return 'en'
+    return 'ru'
 
 def tokenize_text(text: str, remove_punct: bool = True, remove_stopwords: bool = False) -> Dict[str, Any]:
-    """
-    Токенизация текста
-    
-    Args:
-        text: Входной текст
-        remove_punct: Удалить пунктуацию
-        remove_stopwords: Удалить стоп-слова
-    
-    Returns:
-        Словарь с результатами токенизации
-    """
     try:
-        # Определяем язык
-        lang = detect_language(text)
+        lang = 'ru'
+        stop_words = stop_words_ru
         
-        # Выбираем стоп-слова в зависимости от языка
-        stop_words = stop_words_ru if lang == 'ru' else stop_words_en
-        
-        # Токенизация по предложениям
-        sentences = sent_tokenize(text)
-        
-        # Токенизация по словам
+        sentences = sent_tokenize(text, language='russian')  # ← явно указываем язык!
         all_tokens = []
         sentence_tokens = []
-        
+
         for sentence in sentences:
-            tokens = word_tokenize(sentence)
-            
-            # Очистка токенов
+            tokens = word_tokenize(sentence, language='russian')
             cleaned_tokens = []
             for token in tokens:
-                # Удаление пунктуации
                 if remove_punct and token in string.punctuation:
                     continue
-                
-                # Удаление стоп-слов
                 if remove_stopwords and token.lower() in stop_words:
                     continue
-                
                 cleaned_tokens.append(token)
                 all_tokens.append(token)
             
@@ -128,9 +78,8 @@ def tokenize_text(text: str, remove_punct: bool = True, remove_stopwords: bool =
                 "token_count": len(cleaned_tokens)
             })
         
-        # Статистика
         total_words = len(all_tokens)
-        unique_words = len(set([token.lower() for token in all_tokens]))
+        unique_words = len(set(t.lower() for t in all_tokens))
         
         return {
             "success": True,
@@ -143,65 +92,57 @@ def tokenize_text(text: str, remove_punct: bool = True, remove_stopwords: bool =
         }
     
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
+    
 
-def stem_text(text: str, stemmer_type: str = "porter", remove_punct: bool = True) -> Dict[str, Any]:
+def stem_text(text: str, remove_punct: bool = True) -> Dict[str, Any]:
     """
-    Стемминг текста
+    Стемминг текста (только русский язык)
     
     Args:
-        text: Входной текст
-        stemmer_type: Тип стеммера ("porter" или "snowball")
+        text: Входной текст на русском языке
         remove_punct: Удалить пунктуацию
     
     Returns:
         Словарь с результатами стемминга
     """
     try:
-        # Определяем язык
-        lang = detect_language(text)
+        lang = 'ru'
+        stemmer = snowball_stemmer_ru
+        stemmer_used = "snowball_russian"
         
-        # Выбираем стеммер в зависимости от языка
-        if lang == 'ru':
-            if stemmer_type.lower() == "porter":
-                # Porter не поддерживает русский, используем Snowball
-                stemmer = snowball_stemmer_ru
-                stemmer_used = "snowball_russian"
-            else:
-                stemmer = snowball_stemmer_ru
-                stemmer_used = "snowball_russian"
-        else:
-            if stemmer_type.lower() == "snowball":
-                stemmer = snowball_stemmer_en
-                stemmer_used = "snowball_english"
-            else:
-                stemmer = porter_stemmer
-                stemmer_used = "porter"
-        
-        # Токенизация
-        tokens = word_tokenize(text)
+        # Токенизация (указываем язык явно)
+        tokens = word_tokenize(text, language='russian')
         
         # Стемминг
-        stemmed_tokens = []
         original_stemmed_pairs = []
         
         for token in tokens:
-            # Пропускаем пунктуацию
             if remove_punct and token in string.punctuation:
                 continue
-            
-            # Стемминг
             stemmed = stemmer.stem(token)
-            stemmed_tokens.append(stemmed)
             original_stemmed_pairs.append({
                 "original": token,
                 "stemmed": stemmed
             })
         
-        # Группировка одинаковых основ
+        if not original_stemmed_pairs:
+            return {
+                "success": True,
+                "language": lang,
+                "stemmer_type": stemmer_used,
+                "total_tokens": len(tokens),
+                "stemmed_tokens": 0,
+                "unique_stems": 0,
+                "reduction_rate": 0.0,
+                "original_stemmed_pairs": [],
+                "stem_groups": {},
+                "stemmed_text": ""
+            }
+        
+        stemmed_tokens = [pair["stemmed"] for pair in original_stemmed_pairs]
+        
+        # Группировка по основам
         stem_groups = {}
         for pair in original_stemmed_pairs:
             stem = pair["stemmed"]
@@ -209,8 +150,10 @@ def stem_text(text: str, stemmer_type: str = "porter", remove_punct: bool = True
                 stem_groups[stem] = []
             stem_groups[stem].append(pair["original"])
         
-        # Подсчет статистики
-        reduction_rate = 1 - (len(set(stemmed_tokens)) / len(set([p["original"] for p in original_stemmed_pairs]))) if original_stemmed_pairs else 0
+        # Коэффициент сжатия
+        original_unique = len(set(pair["original"] for pair in original_stemmed_pairs))
+        stemmed_unique = len(set(stemmed_tokens))
+        reduction_rate = 1 - (stemmed_unique / original_unique) if original_unique > 0 else 0
         
         return {
             "success": True,
@@ -218,7 +161,7 @@ def stem_text(text: str, stemmer_type: str = "porter", remove_punct: bool = True
             "stemmer_type": stemmer_used,
             "total_tokens": len(tokens),
             "stemmed_tokens": len(stemmed_tokens),
-            "unique_stems": len(set(stemmed_tokens)),
+            "unique_stems": stemmed_unique,
             "reduction_rate": round(reduction_rate, 4),
             "original_stemmed_pairs": original_stemmed_pairs,
             "stem_groups": stem_groups,
@@ -233,140 +176,56 @@ def stem_text(text: str, stemmer_type: str = "porter", remove_punct: bool = True
 
 def lemmatize_text(text: str, pos_tagging: bool = True, remove_punct: bool = True) -> Dict[str, Any]:
     """
-    Лемматизация текста
+    Лемматизация текста (только русский язык через Mystem)
     
     Args:
-        text: Входной текст
-        pos_tagging: Использовать POS-тегинг для лучшей лемматизации
+        text: Входной текст на русском языке
+        pos_tagging: Игнорируется (сохранён для совместимости API)
         remove_punct: Удалить пунктуацию
     
     Returns:
         Словарь с результатами лемматизации
     """
     try:
-        # Определяем язык
-        lang = detect_language(text)
+        lang = 'ru'
+        method_used = "mystem"
         
-        if lang == 'ru':
-            # Для русского используем Mystem
-            # Mystem возвращает леммы с дополнительной информацией
-            analysis = mystem.analyze(text)
-            
-            # Извлекаем леммы
-            lemmatized_tokens = []
-            lemmatization_pairs = []
-            
-            for item in analysis:
-                if 'analysis' in item and item['analysis']:
-                    # Берем первую гипотезу анализа
-                    lemma = item['analysis'][0]['lex']
-                    original = item['text']
-                    
-                    # Пропускаем пунктуацию
-                    if remove_punct and original in string.punctuation:
-                        continue
-                    
-                    lemmatized_tokens.append(lemma)
-                    lemmatization_pairs.append({
-                        "original": original,
-                        "lemma": lemma,
-                        "method": "mystem"
-                    })
-                elif 'text' in item and item['text'].strip():
-                    # Если анализа нет, используем оригинальный текст
-                    original = item['text']
-                    if remove_punct and original in string.punctuation:
-                        continue
-                    
-                    lemmatized_tokens.append(original)
-                    lemmatization_pairs.append({
-                        "original": original,
-                        "lemma": original,
-                        "method": "mystem"
-                    })
-            
-            method_used = "mystem"
-            
-        else:
-            # Для английского используем WordNetLemmatizer
-            tokens = word_tokenize(text)
-            
-            if pos_tagging:
-                # Получение POS-тегов
-                pos_tags = pos_tag(tokens)
-                
-                # Функция для преобразования POS-тегов NLTK в формат WordNet
-                def get_wordnet_pos(treebank_tag: str) -> str:
-                    if treebank_tag.startswith('J'):
-                        return 'a'  # adjective
-                    elif treebank_tag.startswith('V'):
-                        return 'v'  # verb
-                    elif treebank_tag.startswith('N'):
-                        return 'n'  # noun
-                    elif treebank_tag.startswith('R'):
-                        return 'r'  # adverb
-                    else:
-                        return 'n'  # по умолчанию noun
-                
-                # Лемматизация с учетом POS-тегов
-                lemmatizer = WordNetLemmatizer()
-                lemmatized_tokens = []
-                lemmatization_pairs = []
-                
-                for token, tag in pos_tags:
-                    # Пропускаем пунктуацию
-                    if remove_punct and token in string.punctuation:
-                        continue
-                    
-                    # Получение POS-тега WordNet
-                    wordnet_tag = get_wordnet_pos(tag)
-                    
-                    # Лемматизация
-                    lemma = lemmatizer.lemmatize(token, pos=wordnet_tag)
-                    lemmatized_tokens.append(lemma)
-                    lemmatization_pairs.append({
-                        "original": token,
-                        "pos_tag": tag,
-                        "wordnet_pos": wordnet_tag,
-                        "lemma": lemma,
-                        "method": "wordnet"
-                    })
-            else:
-                # Лемматизация без POS-тегов
-                lemmatizer = WordNetLemmatizer()
-                lemmatized_tokens = []
-                lemmatization_pairs = []
-                
-                for token in tokens:
-                    # Пропускаем пунктуацию
-                    if remove_punct and token in string.punctuation:
-                        continue
-                    
-                    # Лемматизация
-                    lemma = lemmatizer.lemmatize(token)
-                    lemmatized_tokens.append(lemma)
-                    lemmatization_pairs.append({
-                        "original": token,
-                        "lemma": lemma,
-                        "method": "wordnet"
-                    })
-            
-            method_used = "wordnet" + ("_with_postag" if pos_tagging else "")
+        # Анализ через Mystem
+        analysis = mystem.analyze(text)
         
-        # Группировка лемм
+        lemmatized_tokens = []
+        lemmatization_pairs = []
+        
+        for item in analysis:
+            original = item.get('text', '')
+            if not original.strip():
+                continue
+            
+            # Пропускаем пунктуацию
+            if remove_punct and original in string.punctuation:
+                continue
+            
+            lemma = original  # по умолчанию
+            
+            # Если есть морфологический анализ — берём первую лемму
+            if 'analysis' in item and item['analysis']:
+                lemma = item['analysis'][0]['lex']
+            
+            lemmatized_tokens.append(lemma)
+            lemmatization_pairs.append({
+                "original": original,
+                "lemma": lemma,
+                "method": "mystem"
+            })
+        
+        # Группировка по леммам
         lemma_groups = {}
         for pair in lemmatization_pairs:
             lemma = pair["lemma"]
             if lemma not in lemma_groups:
                 lemma_groups[lemma] = []
-            
-            group_entry = {"original": pair["original"]}
-            if "pos_tag" in pair:
-                group_entry["pos_tag"] = pair["pos_tag"]
-            
-            lemma_groups[lemma].append(group_entry)
+            lemma_groups[lemma].append({"original": pair["original"]})
         
-        # Подсчет статистики
         total_tokens = len(lemmatization_pairs)
         unique_lemmas = len(set(lemmatized_tokens))
         
@@ -374,7 +233,7 @@ def lemmatize_text(text: str, pos_tagging: bool = True, remove_punct: bool = Tru
             "success": True,
             "language": lang,
             "method_used": method_used,
-            "pos_tagging_used": pos_tagging if lang == 'en' else False,
+            "pos_tagging_used": False,  # Mystem не возвращает POS в этом формате
             "total_tokens": total_tokens,
             "lemmatized_tokens": len(lemmatized_tokens),
             "unique_lemmas": unique_lemmas,
@@ -391,193 +250,117 @@ def lemmatize_text(text: str, pos_tagging: bool = True, remove_punct: bool = Tru
 
 def pos_tag_text(text: str, detailed: bool = False) -> Dict[str, Any]:
     """
-    POS-теггинг текста
+    POS-теггинг текста (только русский язык через Mystem)
     
     Args:
-        text: Входной текст
+        text: Входной текст на русском языке
         detailed: Возвращать подробную информацию о тегах
     
     Returns:
         Словарь с результатами POS-теггинга
     """
     try:
-        # Определяем язык
-        lang = detect_language(text)
+        lang = 'ru'
+        method_used = "mystem"
         
-        if lang == 'ru':
-            # Для русского используем Mystem для получения POS-тегов
-            analysis = mystem.analyze(text)
-            
-            pos_tags = []
-            tag_counts = {}
-            tag_examples = {}
-            
-            for item in analysis:
-                if 'analysis' in item and item['analysis']:
-                    original = item['text']
-                    # Mystem возвращает грамматическую информацию
-                    gram_info = item['analysis'][0].get('gr', '')
-                    
-                    # Извлекаем часть речи из грамматической информации
-                    if 'S' in gram_info:  # Существительное
-                        tag = 'NOUN'
-                    elif 'V' in gram_info:  # Глагол
-                        tag = 'VERB'
-                    elif 'A' in gram_info:  # Прилагательное
-                        tag = 'ADJ'
-                    elif 'ADV' in gram_info:  # Наречие
-                        tag = 'ADV'
-                    elif 'PR' in gram_info:  # Предлог
-                        tag = 'ADP'
-                    elif 'CONJ' in gram_info:  # Союз
-                        tag = 'CONJ'
-                    elif 'NUM' in gram_info:  # Числительное
-                        tag = 'NUM'
-                    else:
-                        tag = 'X'  # Неизвестно
-                else:
-                    original = item['text']
-                    if original in string.punctuation:
-                        tag = 'PUNCT'
-                    else:
-                        tag = 'X'
-                
-                pos_tags.append((original, tag))
-                
-                # Статистика
-                if tag not in tag_counts:
-                    tag_counts[tag] = 0
-                    tag_examples[tag] = []
-                
-                tag_counts[tag] += 1
-                if original not in tag_examples[tag]:
-                    tag_examples[tag].append(original)
-            
-            # Описания тегов для русского
-            tag_descriptions_ru = {
-                'NOUN': 'существительное',
-                'VERB': 'глагол',
-                'ADJ': 'прилагательное',
-                'ADV': 'наречие',
-                'ADP': 'предлог',
-                'CONJ': 'союз',
-                'NUM': 'числительное',
-                'PUNCT': 'знак препинания',
-                'X': 'другое'
-            }
-            
-            method_used = "mystem"
-            
-        else:
-            # Для английского используем NLTK
-            tokens = word_tokenize(text)
-            pos_tags = pos_tag(tokens)
-            
-            # Статистика по тегам
-            tag_counts = {}
-            tag_examples = {}
-            
-            for token, tag in pos_tags:
-                if tag not in tag_counts:
-                    tag_counts[tag] = 0
-                    tag_examples[tag] = []
-                
-                tag_counts[tag] += 1
-                if token not in tag_examples[tag]:
-                    tag_examples[tag].append(token)
-            
-            # Описания тегов для английского
-            tag_descriptions_en = {
-                'NN': 'noun, singular or mass',
-                'NNS': 'noun, plural',
-                'NNP': 'proper noun, singular',
-                'NNPS': 'proper noun, plural',
-                'VB': 'verb, base form',
-                'VBD': 'verb, past tense',
-                'VBG': 'verb, gerund or present participle',
-                'VBN': 'verb, past participle',
-                'VBP': 'verb, non-3rd person singular present',
-                'VBZ': 'verb, 3rd person singular present',
-                'JJ': 'adjective',
-                'JJR': 'adjective, comparative',
-                'JJS': 'adjective, superlative',
-                'RB': 'adverb',
-                'RBR': 'adverb, comparative',
-                'RBS': 'adverb, superlative',
-                'IN': 'preposition or subordinating conjunction',
-                'DT': 'determiner',
-                'PRP': 'personal pronoun',
-                'PRP$': 'possessive pronoun',
-                'CC': 'coordinating conjunction',
-                'CD': 'cardinal number',
-                'MD': 'modal',
-                'TO': 'to',
-                'UH': 'interjection',
-                'WP': 'wh-pronoun',
-                'WRB': 'wh-adverb',
-                '.': 'punctuation mark, sentence closer',
-                ',': 'punctuation mark, comma',
-                ':': 'punctuation mark, colon',
-                ';': 'punctuation mark, semicolon'
-            }
-            
-            method_used = "nltk"
+        # Анализ через Mystem
+        analysis = mystem.analyze(text)
         
-        # Список POS-тегов с примерами
+        pos_tags = []
+        tag_counts = {}
+        tag_examples = {}
+        
+        for item in analysis:
+            original = item.get('text', '')
+            if not original.strip():
+                continue
+            
+            # Определяем тег по грамматической информации из Mystem
+            gram_info = item['analysis'][0].get('gr', '')
+
+            # Определяем часть речи по началу граммемы (до запятой или '=')
+            if gram_info.startswith('S,') or gram_info.startswith('S='):
+                tag = 'NOUN'
+            elif gram_info.startswith('A,') or gram_info.startswith('A='):
+                tag = 'ADJ'
+            elif gram_info.startswith('V,') or gram_info.startswith('V='):
+                tag = 'VERB'
+            elif 'ADV' in gram_info:
+                tag = 'ADV'
+            elif gram_info.startswith('PR,') or gram_info.startswith('PR='):
+                tag = 'ADP'
+            elif 'CONJ' in gram_info:
+                tag = 'CONJ'
+            elif 'NUM' in gram_info:
+                tag = 'NUM'
+            elif 'SPRO' in gram_info:
+                tag = 'PRON'          # ← местоимения!
+            elif 'PART' in gram_info:
+                tag = 'PART'          # ← частицы ("не", "же", "ли" и т.д.)
+            elif 'INTJ' in gram_info:
+                tag = 'INTJ'          # междометия
+            else:
+                tag = 'X'
+            
+            pos_tags.append((original, tag))
+            
+            # Статистика
+            if tag not in tag_counts:
+                tag_counts[tag] = 0
+                tag_examples[tag] = []
+            tag_counts[tag] += 1
+            if original not in tag_examples[tag]:
+                tag_examples[tag].append(original)
+        
+        # Описания тегов для русского
+        tag_descriptions_ru = {
+            'NOUN': 'существительное',
+            'VERB': 'глагол',
+            'ADJ': 'прилагательное',
+            'ADV': 'наречие',
+            'ADP': 'предлог',
+            'CONJ': 'союз',
+            'NUM': 'числительное',
+            'PRON': 'местоимение',      
+            'PART': 'частица',          
+            'INTJ': 'междометие',       
+            'PUNCT': 'знак препинания',
+            'X': 'другое'
+        }
+
+        # Формируем список тегов
         tag_list = []
         for tag, count in tag_counts.items():
             tag_info = {
                 "tag": tag,
                 "count": count,
-                "examples": tag_examples[tag][:5]  # Первые 5 примеров
+                "examples": tag_examples[tag][:5]
             }
-            
             if detailed:
-                # Добавление описания тега
-                if lang == 'ru':
-                    tag_info["description"] = tag_descriptions_ru.get(tag, "Неизвестный тег")
-                else:
-                    tag_info["description"] = tag_descriptions_en.get(tag, "Unknown tag")
-            
+                tag_info["description"] = tag_descriptions_ru.get(tag, "Неизвестный тег")
             tag_list.append(tag_info)
         
-        # Сортировка по количеству
         tag_list.sort(key=lambda x: x["count"], reverse=True)
         
-        # Группировка по основным категориям (для английского)
-        if lang == 'en':
-            category_mapping = {
-                'NN': 'Nouns', 'NNS': 'Nouns', 'NNP': 'Nouns', 'NNPS': 'Nouns',
-                'VB': 'Verbs', 'VBD': 'Verbs', 'VBG': 'Verbs', 'VBN': 'Verbs', 'VBP': 'Verbs', 'VBZ': 'Verbs',
-                'JJ': 'Adjectives', 'JJR': 'Adjectives', 'JJS': 'Adjectives',
-                'RB': 'Adverbs', 'RBR': 'Adverbs', 'RBS': 'Adverbs'
-            }
-            
-            category_counts = {}
-            for tag, count in tag_counts.items():
-                category = category_mapping.get(tag, 'Other')
-                if category not in category_counts:
-                    category_counts[category] = 0
-                category_counts[category] += count
-        else:
-            # Для русского
-            category_mapping = {
-                'NOUN': 'Существительные',
-                'VERB': 'Глаголы',
-                'ADJ': 'Прилагательные',
-                'ADV': 'Наречия',
-                'ADP': 'Предлоги',
-                'CONJ': 'Союзы',
-                'NUM': 'Числительные',
-                'PUNCT': 'Знаки препинания'
-            }
-            
-            category_counts = {}
-            for tag, count in tag_counts.items():
-                category = category_mapping.get(tag, 'Другое')
-                if category not in category_counts:
-                    category_counts[category] = 0
-                category_counts[category] += count
+        # Группировка по категориям
+        category_mapping = {
+            'NOUN': 'Существительные',
+            'VERB': 'Глаголы',
+            'ADJ': 'Прилагательные',
+            'ADV': 'Наречия',
+            'ADP': 'Предлоги',
+            'CONJ': 'Союзы',
+            'NUM': 'Числительные',
+            'PRON': 'Местоимения',      # ←
+            'PART': 'Частицы',          # ←
+            'INTJ': 'Междометия',       # ←
+            'PUNCT': 'Знаки препинания'
+        }
+        
+        category_counts = {}
+        for tag, count in tag_counts.items():
+            category = category_mapping.get(tag, 'Другое')
+            category_counts[category] = category_counts.get(category, 0) + count
         
         return {
             "success": True,
@@ -596,146 +379,83 @@ def pos_tag_text(text: str, detailed: bool = False) -> Dict[str, Any]:
             "error": str(e)
         }
 
-def ner_text(text: str, binary: bool = False) -> Dict[str, Any]:
+def ner_text(text: str) -> Dict[str, Any]:
     """
-    Распознавание именованных сущностей (Named Entity Recognition)
+    Распознавание именованных сущностей (Named Entity Recognition) — только русский язык
     
     Args:
-        text: Входной текст
-        binary: Бинарный режим (только наличие сущностей без классификации)
+        text: Входной текст на русском языке
     
     Returns:
         Словарь с результатами NER
     """
     try:
-        # Определяем язык
-        lang = detect_language(text)
+        lang = 'ru'
         
-        if lang == 'ru':
-            # Для русского используем простое правило-основу
-            # В реальном проекте нужно использовать natasha или другой NER для русского
-            tokens = word_tokenize(text)
-            
-            # Простая эвристика для русского
-            entities = []
-            
-            # Поиск возможных имен (слова с заглавной буквы в середине предложения)
-            sentences = sent_tokenize(text)
-            for sentence in sentences:
-                words = word_tokenize(sentence)
-                i = 0
-                while i < len(words):
-                    if words[i][0].isupper() and i > 0:  # Не первое слово в предложении
-                        # Собираем последовательность слов с заглавной буквы
-                        entity_tokens = [words[i]]
-                        j = i + 1
-                        while j < len(words) and words[j][0].isupper():
-                            entity_tokens.append(words[j])
-                            j += 1
-                        
-                        if len(entity_tokens) >= 1:
-                            entity_name = " ".join(entity_tokens)
-                            # Простая классификация
-                            if any(word in entity_name.lower() for word in ['ул.', 'улица', 'проспект', 'пр.', 'город', 'г.', 'страна']):
-                                entity_type = 'LOCATION'
-                            elif any(word in entity_name.lower() for word in ['ооо', 'зао', 'оао', 'компания', 'корпорация']):
-                                entity_type = 'ORGANIZATION'
-                            else:
-                                entity_type = 'PERSON' if len(entity_tokens) <= 3 else 'ORGANIZATION'
-                            
-                            entities.append({
-                                "entity": entity_name,
-                                "type": entity_type,
-                                "tokens": entity_tokens
-                            })
-                        
-                        i = j
-                    else:
-                        i += 1
-            
-            method_used = "heuristic_russian"
-            
-        else:
-            # Для английского используем NLTK
-            tokens = word_tokenize(text)
-            pos_tags = pos_tag(tokens)
-            
-            # Распознавание именованных сущностей
-            named_entities = ne_chunk(pos_tags, binary=binary)
-            
-            # Извлечение сущностей из дерева
-            entities = []
-            
-            def extract_entities(tree):
-                entities_found = []
-                
-                if hasattr(tree, 'label'):
-                    if tree.label():
-                        # Это именованная сущность
-                        entity_name = " ".join([child[0] for child in tree])
-                        entity_type = tree.label()
-                        
-                        entities_found.append({
-                            "entity": entity_name,
-                            "type": entity_type,
-                            "tokens": [child[0] for child in tree]
-                        })
-                    
-                    # Рекурсивный обход детей
-                    for child in tree:
-                        if isinstance(child, Tree):
-                            entities_found.extend(extract_entities(child))
-                
-                return entities_found
-            
-            entities = extract_entities(named_entities)
-            method_used = "nltk"
+        # Токенизация для подсчёта total_tokens (можно также использовать len(text.split()), но оставим как есть)
+        tokens = word_tokenize(text, language='russian')
         
-        # Статистика по типам сущностей
-        entity_types = {}
-        for entity in entities:
-            entity_type = entity["type"]
-            if entity_type not in entity_types:
-                entity_types[entity_type] = 0
-            entity_types[entity_type] += 1
-        
-        # Сокращенные описания типов сущностей
-        entity_type_descriptions = {
-            'PERSON': 'People, including fictional',
-            'ORGANIZATION': 'Companies, agencies, institutions',
-            'GPE': 'Countries, cities, states (Geo-Political Entity)',
-            'LOCATION': 'Non-GPE locations, mountain ranges, bodies of water',
-            'DATE': 'Absolute or relative dates or periods',
-            'TIME': 'Times smaller than a day',
-            'MONEY': 'Monetary values, including unit',
-            'PERCENT': 'Percentage (including "%")',
-            'FACILITY': 'Buildings, airports, highways, bridges, etc.',
-            'PRODUCT': 'Objects, vehicles, foods, etc. (not services)'
-        }
-        
-        # Подробная информация о типах сущностей
-        detailed_entity_types = []
-        for entity_type, count in entity_types.items():
-            type_info = {
-                "type": entity_type,
-                "count": count,
-                "description": entity_type_descriptions.get(entity_type, "Unknown entity type"),
-                "examples": [e["entity"] for e in entities if e["type"] == entity_type][:3]  # 3 примера
+        # Обработка через Natasha
+        doc = Doc(text)
+        doc.segment(segmenter)
+        doc.tag_ner(ner_tagger)
+
+        entities = []
+        for span in doc.spans:
+            # Преобразуем типы Natasha в стандартные
+            type_map = {
+                'PER': 'PERSON',
+                'ORG': 'ORGANIZATION',
+                'LOC': 'LOCATION'
             }
-            detailed_entity_types.append(type_info)
-        
-        # Сортировка по количеству
+            entity_type = type_map.get(span.type, span.type)
+
+            # Извлекаем токены
+            span_tokens = [token.text for token in span.tokens]
+
+            entities.append({
+                "entity": span.text,
+                "type": entity_type,
+                "tokens": span_tokens
+            })
+
+        method_used = "natasha"
+
+        # Статистика по типам
+        entity_types = {}
+        for ent in entities:
+            t = ent["type"]
+            entity_types[t] = entity_types.get(t, 0) + 1
+
+        # Описания типов 
+        entity_type_descriptions = {
+            'PERSON': 'Люди, включая вымышленных',
+            'ORGANIZATION': 'Компании, агентства, учреждения',
+            'LOCATION': 'Местоположения: города, страны, регионы, улицы и т.д.'
+        }
+
+        detailed_entity_types = []
+        for etype, count in entity_types.items():
+            examples = [e["entity"] for e in entities if e["type"] == etype][:3]
+            detailed_entity_types.append({
+                "type": etype,
+                "count": count,
+                "description": entity_type_descriptions.get(etype, "Неизвестный тип сущности"),
+                "examples": examples
+            })
+
         detailed_entity_types.sort(key=lambda x: x["count"], reverse=True)
-        
+
         # Подсветка сущностей в тексте
         highlighted_text = text
-        for entity in sorted(entities, key=lambda x: len(x["entity"]), reverse=True):
-            if entity["entity"] in highlighted_text:
+        # Сортируем по длине (длинные — первыми), чтобы избежать частичных замен
+        for ent in sorted(entities, key=lambda x: len(x["entity"]), reverse=True):
+            if ent["entity"] in highlighted_text:
                 highlighted_text = highlighted_text.replace(
-                    entity["entity"],
-                    f"[{entity['entity']}]({entity['type']})"
+                    ent["entity"],
+                    f"[{ent['entity']}]({ent['type']})"
                 )
-        
+
         return {
             "success": True,
             "language": lang,
@@ -746,7 +466,7 @@ def ner_text(text: str, binary: bool = False) -> Dict[str, Any]:
             "entity_types": detailed_entity_types,
             "highlighted_text": highlighted_text
         }
-    
+
     except Exception as e:
         return {
             "success": False,
@@ -755,7 +475,7 @@ def ner_text(text: str, binary: bool = False) -> Dict[str, Any]:
 
 def process_text_request(request_data: dict, endpoint: str) -> Dict[str, Any]:
     """
-    Обработка запроса на обработку текста
+    Обработка запроса на обработку текста (только русский язык)
     
     Args:
         request_data: Данные запроса
@@ -765,7 +485,6 @@ def process_text_request(request_data: dict, endpoint: str) -> Dict[str, Any]:
         Результаты обработки
     """
     try:
-        # Извлечение документов из запроса
         documents = request_data.get("documents", [])
         
         if not documents:
@@ -774,28 +493,36 @@ def process_text_request(request_data: dict, endpoint: str) -> Dict[str, Any]:
                 "error": "No documents provided"
             }
         
-        # Обработка каждого документа
         results = []
         
         for doc in documents:
             if not isinstance(doc, str):
                 continue
             
-            # Выбор функции обработки
+            # Выбор функции обработки (только русский)
             if endpoint == "tokenize":
-                result = tokenize_text(doc)
+                remove_punct = request_data.get("remove_punct", True)
+                remove_stopwords = request_data.get("remove_stopwords", False)
+                result = tokenize_text(doc, remove_punct=remove_punct, remove_stopwords=remove_stopwords)
+                
             elif endpoint == "stem":
-                stemmer_type = request_data.get("stemmer_type", "porter")
-                result = stem_text(doc, stemmer_type=stemmer_type)
+                # Параметр stemmer_type больше не используется (только snowball_russian)
+                remove_punct = request_data.get("remove_punct", True)
+                result = stem_text(doc, remove_punct=remove_punct)
+                
             elif endpoint == "lemmatize":
-                pos_tagging = request_data.get("pos_tagging", True)
-                result = lemmatize_text(doc, pos_tagging=pos_tagging)
+                # pos_tagging игнорируется (Mystem всегда использует морфологию)
+                remove_punct = request_data.get("remove_punct", True)
+                result = lemmatize_text(doc, remove_punct=remove_punct)
+                
             elif endpoint == "postag":
                 detailed = request_data.get("detailed", False)
                 result = pos_tag_text(doc, detailed=detailed)
+                
             elif endpoint == "ner":
-                binary = request_data.get("binary", False)
-                result = ner_text(doc, binary=binary)
+                # binary игнорируется (Natasha не поддерживает бинарный режим как NLTK)
+                result = ner_text(doc)
+                
             else:
                 return {
                     "success": False,
@@ -807,7 +534,6 @@ def process_text_request(request_data: dict, endpoint: str) -> Dict[str, Any]:
                 "result": result
             })
         
-        # Сводная статистика
         summary = {
             "total_documents": len(documents),
             "processed_documents": len(results),
@@ -825,59 +551,3 @@ def process_text_request(request_data: dict, endpoint: str) -> Dict[str, Any]:
             "success": False,
             "error": str(e)
         }
-
-# Примеры использования функций
-if __name__ == "__main__":
-    # Тестовые тексты на обоих языках
-    test_text_en = "Natural Language Processing (NLP) is a field of artificial intelligence that focuses on the interaction between computers and human language. John Smith works at Google in New York City and earns $150,000 per year."
-    
-    test_text_ru = "Обработка естественного языка (NLP) - это область искусственного интеллекта, которая занимается взаимодействием между компьютерами и человеческим языком. Иван Иванов работает в компании Яндекс в Москве и зарабатывает 150 000 рублей в год."
-    
-    print("Тестирование функций NLTK:")
-    print("=" * 60)
-    
-    print("\n=== АНГЛИЙСКИЙ ТЕКСТ ===")
-    # Токенизация
-    print("\n1. Токенизация:")
-    token_result = tokenize_text(test_text_en)
-    print(f"Язык: {token_result.get('language', 'unknown')}")
-    print(f"Предложений: {token_result.get('total_sentences', 0)}")
-    print(f"Слов: {token_result.get('total_words', 0)}")
-    print(f"Уникальных слов: {token_result.get('unique_words', 0)}")
-    
-    # Стемминг
-    print("\n2. Стемминг (Porter):")
-    stem_result = stem_text(test_text_en)
-    print(f"Язык: {stem_result.get('language', 'unknown')}")
-    print(f"Оригинальных токенов: {stem_result.get('total_tokens', 0)}")
-    print(f"Уникальных основ: {stem_result.get('unique_stems', 0)}")
-    
-    # Лемматизация
-    print("\n3. Лемматизация:")
-    lemma_result = lemmatize_text(test_text_en, pos_tagging=True)
-    print(f"Язык: {lemma_result.get('language', 'unknown')}")
-    print(f"Метод: {lemma_result.get('method_used', 'unknown')}")
-    print(f"Уникальных лемм: {lemma_result.get('unique_lemmas', 0)}")
-    
-    print("\n=== РУССКИЙ ТЕКСТ ===")
-    # Токенизация
-    print("\n1. Токенизация:")
-    token_result_ru = tokenize_text(test_text_ru)
-    print(f"Язык: {token_result_ru.get('language', 'unknown')}")
-    print(f"Предложений: {token_result_ru.get('total_sentences', 0)}")
-    print(f"Слов: {token_result_ru.get('total_words', 0)}")
-    print(f"Уникальных слов: {token_result_ru.get('unique_words', 0)}")
-    
-    # Стемминг
-    print("\n2. Стемминг:")
-    stem_result_ru = stem_text(test_text_ru)
-    print(f"Язык: {stem_result_ru.get('language', 'unknown')}")
-    print(f"Стеммер: {stem_result_ru.get('stemmer_type', 'unknown')}")
-    print(f"Оригинальных токенов: {stem_result_ru.get('total_tokens', 0)}")
-    
-    # Лемматизация
-    print("\n3. Лемматизация:")
-    lemma_result_ru = lemmatize_text(test_text_ru)
-    print(f"Язык: {lemma_result_ru.get('language', 'unknown')}")
-    print(f"Метод: {lemma_result_ru.get('method_used', 'unknown')}")
-    print(f"Уникальных лемм: {lemma_result_ru.get('unique_lemmas', 0)}")
